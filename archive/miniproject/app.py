@@ -1,7 +1,13 @@
+
 import importlib
+import logging
 import sys
+import traceback
 
 import streamlit as st
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("shield_ai")
 
 st.set_page_config(
     page_title="SHIELD-AI",
@@ -9,18 +15,10 @@ st.set_page_config(
     layout="wide",
 )
 
+logger.info("SHIELD-AI application startup")
+
 st.title("SHIELD-AI")
 st.subheader("Agentic Fraud Detection and Investigation System")
-
-page = st.sidebar.selectbox(
-    "Choose Module",
-    [
-        "Dashboard",
-        "Fraud Detection",
-        "Fraud Attribution",
-        "Case Report",
-    ],
-)
 
 page_modules = {
     "Dashboard": "frontend.dashboard",
@@ -29,21 +27,28 @@ page_modules = {
     "Case Report": "frontend.report_generator",
 }
 
+page = st.sidebar.selectbox(
+    "Choose Module",
+    list(page_modules.keys()),
+)
+
 module_name = page_modules[page]
 
 try:
-    importlib.invalidate_caches()
+    logger.info("Loading page: %s (%s)", page, module_name)
 
-    if module_name in sys.modules:
-        module = sys.modules[module_name]
-        try:
-            module = importlib.reload(module)
-        except ImportError:
-            sys.modules.pop(module_name, None)
-            module = importlib.import_module(module_name)
-    else:
-        module = importlib.import_module(module_name)
+    # Add the archive/miniproject directory to the import path.
+    app_dir = __file__.rsplit("/", 1)[0]
+    if app_dir not in sys.path:
+        sys.path.insert(0, app_dir)
+
+    importlib.invalidate_caches()
+    importlib.import_module(module_name)
+
+    logger.info("Successfully loaded page: %s", page)
 
 except Exception as exc:
+    logger.exception("Failed to load page: %s", page)
     st.error(f"Could not load the {page} page.")
     st.exception(exc)
+    st.code(traceback.format_exc())
