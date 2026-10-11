@@ -26,7 +26,7 @@ PREPROCESSING_PATH = (
 class RiskAssessmentAgent:
     """Risk assessment using the saved LightGBM model and preprocessing schema."""
 
-    def __init__(self):
+    def __init__(self, threshold=0.371294741468585):
         if not MODEL_PATH.is_file():
             raise FileNotFoundError(
                 f"Trained model not found: {MODEL_PATH}"
@@ -43,7 +43,7 @@ class RiskAssessmentAgent:
         self._load_preprocessing_metadata()
 
         # This is the previously selected validation threshold.
-        self.threshold = 0.371294741468585
+        self.threshold = float(threshold)
 
         self.explainer = None
 
