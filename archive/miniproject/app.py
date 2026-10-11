@@ -1,4 +1,4 @@
-```python
+
 import importlib
 import logging
 import sys
@@ -74,4 +74,3 @@ except Exception as exc:
     logger.exception("Failed to load page: %s", page)
     st.error(f"Could not load the {page} page.")
     st.exception(exc)
-```
