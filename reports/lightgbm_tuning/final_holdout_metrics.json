@@ -1,0 +1,16 @@
+{
+    "model": "tuned_baseline_lightgbm",
+    "threshold": 0.371294741468585,
+    "test_rows": 118108,
+    "test_fraud_rate": 0.03498492904798998,
+    "accuracy": 0.9710011176211603,
+    "precision": 0.5602522583944094,
+    "recall": 0.7954985479186835,
+    "f1_score": 0.6574657465746575,
+    "roc_auc": 0.9625793147736271,
+    "average_precision": 0.7894207952974859,
+    "true_negative": 111396,
+    "false_positive": 2580,
+    "false_negative": 845,
+    "true_positive": 3287
+}
