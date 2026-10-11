@@ -1,81 +1,63 @@
-import json
+
+import importlib
+import logging
+import sys
 from pathlib import Path
 
 import streamlit as st
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("shield_ai")
 
-ROOT = Path(__file__).resolve().parents[3]
-METRICS_PATH = (
-    ROOT / "reports" / "lightgbm_tuning" / "final_holdout_metrics.json"
+APP_DIR = Path(__file__).resolve().parent
+REPO_ROOT = APP_DIR.parents[1]
+
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+st.set_page_config(
+    page_title="SHIELD-AI",
+    page_icon="🛡️",
+    layout="wide",
 )
 
+st.title("SHIELD-AI")
+st.subheader("Agentic Fraud Detection and Investigation System")
 
-def render_dashboard():
-    st.header("Fraud Monitoring Dashboard")
-    st.caption(
-        "SHIELD-AI · IEEE-CIS evaluation results. "
-        "These are offline test metrics, not live transaction statistics."
-    )
+page_modules = {
+    "Dashboard": "frontend.dashboard",
+    "Fraud Detection": "frontend.fraud_detector",
+    "Fraud Attribution": "frontend.attribution_agent",
+    "Case Report": "frontend.report_generator",
+}
 
-    if not METRICS_PATH.is_file():
-        st.error(f"Evaluation metrics not found: {METRICS_PATH}")
-        return
+page = st.sidebar.selectbox(
+    "Choose Module",
+    list(page_modules.keys()),
+)
 
-    try:
-        with METRICS_PATH.open("r", encoding="utf-8") as file:
-            metrics = json.load(file)
-    except (OSError, json.JSONDecodeError) as exc:
-        st.error(f"Could not load evaluation metrics: {exc}")
-        return
+module_name = page_modules[page]
 
-    # Display only metrics actually recorded in the evaluation file.
-    preferred_metrics = [
-        ("Accuracy", "accuracy"),
-        ("Precision", "precision"),
-        ("Recall", "recall"),
-        ("F1-score", "f1_score"),
-        ("ROC-AUC", "roc_auc"),
-        ("Average precision", "average_precision"),
-    ]
+try:
+    logger.info("Loading page: %s (%s)", page, module_name)
 
-    available = [
-        (label, key)
-        for label, key in preferred_metrics
-        if key in metrics
-    ]
+    importlib.invalidate_caches()
+    module = importlib.import_module(module_name)
 
-    if not available:
-        st.warning(
-            "The metrics file does not contain the expected metric keys. "
-            "Inspect final_holdout_metrics.json before displaying results."
-        )
-        st.json(metrics)
-        return
+    # Dashboard modules render their content during import.
+    # Other modules may expose a render function instead.
+    if page != "Dashboard":
+        render_function = getattr(module, "render_page", None)
 
-    columns = st.columns(min(3, len(available)))
+        if callable(render_function):
+            render_function()
 
-    for index, (label, key) in enumerate(available):
-        value = metrics[key]
-        with columns[index % len(columns)]:
-            st.metric(label, f"{float(value):.2%}")
+    logger.info("Successfully loaded page: %s", page)
 
-    st.divider()
-    st.subheader("Evaluation details")
-
-    details = {
-        key: value
-        for key, value in metrics.items()
-        if key not in {key for _, key in available}
-    }
-
-    if details:
-        st.json(details)
-
-    st.info(
-        "The reported scores come from a held-out dataset. "
-        "They do not represent the number of live transactions or "
-        "frauds investigated by this application."
-    )
-
-
-render_dashboard()
+except Exception as exc:
+    logger.exception("Failed to load page: %s", page)
+    st.error(f"Could not load the {page} page.")
+    st.exception(exc)
