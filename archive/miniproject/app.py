@@ -34,16 +34,22 @@ page = st.sidebar.selectbox(
 
 module_name = page_modules[page]
 
+
 try:
     logger.info("Loading page: %s (%s)", page, module_name)
 
-    # Add the archive/miniproject directory to the import path.
-    app_dir = __file__.rsplit("/", 1)[0]
-    if app_dir not in sys.path:
-        sys.path.insert(0, app_dir)
-
     importlib.invalidate_caches()
-    importlib.import_module(module_name)
+    module = importlib.import_module(module_name)
+
+    if page == "Dashboard":
+        render_function = getattr(module, "render_dashboard", None)
+    else:
+        render_function = getattr(module, "render_page", None)
+
+    if callable(render_function):
+        render_function()
+    elif page != "Dashboard":
+        st.warning(f"The {page} module does not expose a render_page() function.")
 
     logger.info("Successfully loaded page: %s", page)
 
@@ -51,4 +57,3 @@ except Exception as exc:
     logger.exception("Failed to load page: %s", page)
     st.error(f"Could not load the {page} page.")
     st.exception(exc)
-    st.code(traceback.format_exc())

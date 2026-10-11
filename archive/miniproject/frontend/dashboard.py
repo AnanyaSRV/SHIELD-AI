@@ -18,11 +18,6 @@ if str(APP_DIR) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-st.set_page_config(
-    page_title="SHIELD-AI",
-    page_icon="🛡️",
-    layout="wide",
-)
 
 st.title("SHIELD-AI")
 st.subheader("Agentic Fraud Detection and Investigation System")
