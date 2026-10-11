@@ -1,0 +1,58 @@
+```gitignore
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+.conda/
+
+# Secrets and environment variables
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+secrets.toml
+*.pem
+*.key
+
+# Datasets and generated data
+data/
+*.csv
+*.parquet
+*.npz
+*.db
+*.sqlite
+
+# Reports and generated outputs
+reports/*
+!reports/lightgbm_tuning/
+reports/lightgbm_tuning/*
+!reports/lightgbm_tuning/best_validation_model.pkl
+!reports/lightgbm_tuning/preprocessing.pkl
+
+# Logs and temporary files
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+# Legacy models, backups and archived outputs
+archive/Results/
+archive/miniproject/Results/
+archive/models/
+archive/miniproject/models/
+archive/fraud_ensemble.pkl
+archive/rf.pkl
+archive/rf_frontend.pkl
+archive/miniproject/*.pre_rebuild_backup
+archive/miniproject/frontend/*.pre_rebuild_backup
+models/
+*.bak
+*.pre_tuned_backup

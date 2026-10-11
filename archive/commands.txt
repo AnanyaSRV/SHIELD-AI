@@ -1,0 +1,3 @@
+C:/Users/srvan/anaconda/python.exe main.py
+javac FraudAppGUI.java
+java -cp . FraudAppGUI
