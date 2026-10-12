@@ -82,12 +82,12 @@ def render_attribution():
         graph.get("suspicious_neighbors", "Not available"),
     )
 
-    st.warning(
-        "Graph investigation is not performed in the current IEEE-CIS "
-        "workflow because a validated transaction-to-account mapping "
-        "has not been established. 'No reported finding' does not mean "
-        "that a transaction has been proven safe."
-    )
+    st.info(
+    "Graph investigation uses exploratory shared-card proxy relationships. "
+    "Account ownership and fraud rings have not been independently "
+    "validated. A lack of reported findings does not prove that a "
+    "transaction is safe."
+    )  
 
     st.divider()
     st.subheader("Risk result details")
