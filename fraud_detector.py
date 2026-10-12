@@ -2,6 +2,8 @@
 import sys
 from pathlib import Path
 import math
+import tempfile
+import uuid
 import pandas as pd
 import streamlit as st
 
@@ -21,6 +23,11 @@ for directory in (PROJECT_ROOT, SRC_DIR):
 # =========================================================
 # SHIELD-AI IMPORT
 # =========================================================
+
+try:
+    from graph_agent import GraphInvestigationAgent
+except ImportError:
+    GraphInvestigationAgent = None
 
 try:
     from shield_ai import SHIELDAI
@@ -424,175 +431,193 @@ def display_graph_investigation(graph_result):
 
 
 # =========================================================
-# UPLOAD TRANSACTION DATA
+# UPLOAD TRANSACTION DATA — MEMORY-SAFE ROW PROCESSING
 # =========================================================
 
 st.markdown("### Upload Transaction Data")
-
 st.write(
-    "Upload a CSV containing the transaction features expected "
-    "by the trained model. TransactionID is retained for investigation "
-    "but excluded from model features."
+    "Upload a CSV containing the transaction features expected by the trained model. "
+    "The app reads the file in small chunks and keeps only the selected transaction "
+    "in memory; it does not build a DataFrame containing the entire dataset."
 )
 
 uploaded_file = st.file_uploader(
     "Choose a transaction CSV file",
     type=["csv"],
+    key="shield_ai_transaction_upload",
 )
 
 if uploaded_file is None:
-    st.info(
-        "Upload a CSV to begin fraud detection and investigation."
-    )
+    st.info("Upload a CSV to begin fraud detection and investigation.")
     st.stop()
 
+# Read only the header and a tiny preview first. Do not load the full CSV here.
 try:
-    uploaded_df = pd.read_csv(uploaded_file)
+    uploaded_file.seek(0)
+    header_df = pd.read_csv(uploaded_file, nrows=0)
+    uploaded_columns = list(header_df.columns)
+    uploaded_file.seek(0)
+    preview_df = pd.read_csv(uploaded_file, nrows=10)
+    uploaded_file.seek(0)
 except Exception as exc:
-    st.error(f"Could not read the uploaded CSV: {exc}")
+    st.error(f"Could not read the uploaded CSV header/preview: {exc}")
     st.stop()
 
-if uploaded_df.empty:
-    st.error("The uploaded CSV contains no transactions.")
+if not uploaded_columns:
+    st.error("The uploaded CSV has no columns.")
     st.stop()
+
+# Stage the uploaded file on disk in bounded blocks for on-demand graph lookup.
+# This avoids creating a second full pandas DataFrame for graph analysis.
+_graph_columns_lower = {str(column).strip().lower() for column in uploaded_columns}
+graph_dataset_path = None
+if {"transactionid", "card1"}.issubset(_graph_columns_lower):
+    upload_signature = (uploaded_file.name, uploaded_file.size)
+    old_signature = st.session_state.get("shield_ai_graph_upload_signature")
+    old_path = st.session_state.get("shield_ai_graph_upload_path")
+    if old_signature != upload_signature or not old_path or not Path(old_path).is_file():
+        target_path = Path(tempfile.gettempdir()) / f"shield_ai_uploaded_graph_{uuid.uuid4().hex}.csv"
+        try:
+            uploaded_file.seek(0)
+            with target_path.open("wb") as target:
+                while True:
+                    block = uploaded_file.read(1024 * 1024)
+                    if not block:
+                        break
+                    target.write(block)
+            uploaded_file.seek(0)
+            st.session_state["shield_ai_graph_upload_signature"] = upload_signature
+            st.session_state["shield_ai_graph_upload_path"] = str(target_path)
+            st.session_state.pop("shield_ai_graph_agent_path", None)
+        except Exception as exc:
+            st.warning(f"Could not stage CSV for graph lookup: {exc}")
+    graph_dataset_path = st.session_state.get("shield_ai_graph_upload_path")
+else:
+    st.info(
+        "Graph investigation needs both TransactionID and card1 columns. "
+        "Fraud prediction can still run without them."
+    )
 
 st.success(
-    f"Loaded {len(uploaded_df):,} transactions "
-    f"with {len(uploaded_df.columns):,} columns."
+    f"CSV received: {uploaded_file.name} — "
+    f"{len(uploaded_columns):,} columns. The full file has not been loaded into memory."
 )
 
-with st.expander("Preview uploaded data"):
-    st.write(f"Rows: {len(uploaded_df):,}")
-    st.write(f"Columns: {len(uploaded_df.columns):,}")
+with st.expander("Preview uploaded data", expanded=False):
+    st.dataframe(preview_df, use_container_width=True, hide_index=True)
 
-    st.dataframe(
-        uploaded_df.head(10),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-# =========================================================
-# SEPARATE TRANSACTION IDs FROM MODEL FEATURES
-# =========================================================
-
+# Identify non-model columns using the header only.
 transaction_id_column = next(
-    (
-        column
-        for column in uploaded_df.columns
-        if str(column).strip().lower() == "transactionid"
-    ),
+    (column for column in uploaded_columns
+     if str(column).strip().lower() == "transactionid"),
     None,
 )
-
-if transaction_id_column is not None:
-    transaction_ids = uploaded_df[
-        transaction_id_column
-    ].reset_index(drop=True)
-
-    model_input_df = uploaded_df.drop(
-        columns=[transaction_id_column]
-    ).copy()
-else:
-    transaction_ids = pd.Series(
-        [None] * len(uploaded_df),
-        dtype=object,
-    )
-
-    model_input_df = uploaded_df.copy()
-
-
-# =========================================================
-# EXCLUDE TARGET LABELS FROM MODEL INPUT
-# =========================================================
-
-label_names = {
-    "isfraud",
-    "target",
-    "fraud_label",
-    "label",
-}
-
+label_names = {"isfraud", "target", "fraud_label", "label"}
 label_columns = [
-    column
-    for column in model_input_df.columns
+    column for column in uploaded_columns
     if str(column).strip().lower() in label_names
 ]
+model_columns = [
+    column for column in uploaded_columns
+    if column != transaction_id_column and column not in label_columns
+]
+EXPECTED_FEATURE_COUNT = 392
 
 if label_columns:
     st.warning(
-        "Target/label columns were excluded from model input: "
+        "Target/label columns will be excluded from model input: "
         + ", ".join(map(str, label_columns))
     )
 
-    model_input_df = model_input_df.drop(
-        columns=label_columns
-    )
-
-
-# =========================================================
-# VALIDATE MODEL FEATURES
-# =========================================================
-
-EXPECTED_FEATURE_COUNT = 392
-
-if len(model_input_df.columns) != EXPECTED_FEATURE_COUNT:
+if len(model_columns) != EXPECTED_FEATURE_COUNT:
     st.error(
-        f"The model expects {EXPECTED_FEATURE_COUNT} features, "
-        f"but the uploaded file contains "
-        f"{len(model_input_df.columns)} model-input columns "
-        "after excluding transaction IDs and labels."
+        f"The trained model expects {EXPECTED_FEATURE_COUNT} features, but this CSV "
+        f"has {len(model_columns)} model-input columns after excluding the "
+        "transaction ID and target/label columns."
     )
-
-    st.write(
-        "Available model-input columns:",
-        list(model_input_df.columns),
-    )
-
-    st.info(
-        "Use the feature schema expected by the trained model."
-    )
+    with st.expander("Inspect CSV columns"):
+        st.write("CSV columns:", uploaded_columns)
+        st.write("Model-input columns:", model_columns)
+    st.info("Please use a CSV with the feature schema expected by the trained model.")
     st.stop()
 
-
-# =========================================================
-# SELECT TRANSACTION
-# =========================================================
-
 st.markdown("### Select Transaction")
-
-selected_index = st.selectbox(
-    "Choose a transaction row",
-    options=list(range(len(model_input_df))),
-    format_func=lambda index: (
-        f"Row {index + 1} | Transaction ID: "
-        f"{format_integer_like(transaction_ids.iloc[index])}"
-        if transaction_ids.iloc[index] is not None
-        else f"Row {index + 1}"
-    ),
+st.caption(
+    "Enter the row number as it appears in the CSV data, starting at 1 (the header "
+    "is not counted). The app searches in chunks, so even a large CSV does not need "
+    "to fit in memory all at once."
 )
+selected_row_number = st.number_input(
+    "Transaction row number",
+    min_value=1,
+    max_value=10_000_000,
+    value=1,
+    step=1,
+    help="Use 1 for the first data row, 2 for the second, and so on.",
+)
+selected_index = int(selected_row_number) - 1
 
-selected_features = model_input_df.iloc[
-    selected_index
-].to_dict()
+if st.button("Load Selected Transaction", use_container_width=True):
+    selected_row = None
+    rows_seen = 0
+    chunk_size = 5000
+    try:
+        uploaded_file.seek(0)
+        for chunk in pd.read_csv(uploaded_file, chunksize=chunk_size):
+            chunk_end = rows_seen + len(chunk)
+            if rows_seen <= selected_index < chunk_end:
+                selected_row = chunk.iloc[selected_index - rows_seen]
+                break
+            rows_seen = chunk_end
 
-selected_transaction_id = transaction_ids.iloc[
-    selected_index
-]
+        if selected_row is None:
+            st.error(
+                f"Row {selected_row_number:,} was not found. The CSV may contain "
+                f"fewer than {selected_row_number:,} data rows."
+            )
+            st.stop()
+
+        selected_transaction_id = (
+            selected_row[transaction_id_column]
+            if transaction_id_column is not None
+            else None
+        )
+        if selected_transaction_id is not None and pd.isna(selected_transaction_id):
+            selected_transaction_id = None
+
+        # Construct the feature dictionary in the CSV's existing column order.
+        # Only this single row is retained for inference.
+        selected_features = {
+            column: selected_row[column]
+            for column in model_columns
+        }
+        st.session_state["shield_ai_selected_features"] = selected_features
+        st.session_state["shield_ai_selected_transaction_id"] = selected_transaction_id
+        st.session_state["shield_ai_selected_row_index"] = selected_index
+        st.session_state["shield_ai_selected_upload_name"] = uploaded_file.name
+        # Clear old results so a previous transaction is not mistaken for this one.
+        st.session_state.pop("shield_ai_last_result", None)
+        st.session_state.pop("shield_ai_last_transaction_id", None)
+        st.session_state.pop("shield_ai_last_row_index", None)
+        st.success(f"Loaded CSV data row {selected_row_number:,} for investigation.")
+    except Exception as exc:
+        st.error(f"Could not read the selected transaction: {exc}")
+        st.exception(exc)
+
+selected_features = st.session_state.get("shield_ai_selected_features")
+selected_transaction_id = st.session_state.get("shield_ai_selected_transaction_id")
+selected_index = st.session_state.get("shield_ai_selected_row_index")
+selected_upload_name = st.session_state.get("shield_ai_selected_upload_name")
+
+if selected_features is None or selected_upload_name != uploaded_file.name:
+    st.info("Enter a row number and click **Load Selected Transaction** first.")
+    st.stop()
 
 col1, col2 = st.columns(2)
-
 with col1:
-    display_labeled_value(
-        "Selected row",
-        format_integer_like(selected_index + 1),
-    )
-
+    display_labeled_value("Selected CSV row", format_integer_like(selected_index + 1))
 with col2:
-    display_labeled_value(
-        "Transaction ID",
-        format_integer_like(selected_transaction_id),
-    )
+    display_labeled_value("Transaction ID", format_integer_like(selected_transaction_id))
 
 with st.expander("Selected model features"):
     st.json(selected_features)
@@ -611,8 +636,26 @@ if st.button(
         "Running risk assessment and graph investigation..."
     ):
         try:
+            # SHIELDAI.investigate_transaction expects a pandas DataFrame,
+            # not a dictionary. Preserve the trained model's feature order.
+            transaction_features_df = pd.DataFrame(
+                [selected_features],
+                columns=list(selected_features.keys()),
+            )
+
+            # Point the graph agent at this uploaded CSV. The graph agent
+            # reads only allowlisted columns in chunks when investigating.
+            if graph_dataset_path and GraphInvestigationAgent is not None:
+                current_graph_path = st.session_state.get("shield_ai_graph_agent_path")
+                if current_graph_path != graph_dataset_path:
+                    shield_ai.graph_agent = GraphInvestigationAgent(
+                        dataset_path=graph_dataset_path
+                    )
+                    shield_ai.graph_initialization_error = None
+                    st.session_state["shield_ai_graph_agent_path"] = graph_dataset_path
+
             result = shield_ai.investigate_transaction(
-                selected_features,
+                transaction_features_df,
                 transaction_id=selected_transaction_id,
             )
 
