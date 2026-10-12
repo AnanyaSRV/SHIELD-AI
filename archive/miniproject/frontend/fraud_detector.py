@@ -2,6 +2,7 @@
 import sys
 from pathlib import Path
 import math
+
 import pandas as pd
 import streamlit as st
 
@@ -33,8 +34,6 @@ else:
 
 # =========================================================
 # PAGE CONTENT
-# Do not call st.set_page_config() here.
-# The parent app.py controls page configuration.
 # =========================================================
 
 st.title("🛡️ SHIELD-AI Fraud Detection")
@@ -54,7 +53,6 @@ def load_shield_ai():
         raise ImportError(
             SHIELD_IMPORT_ERROR or "Unable to import SHIELDAI."
         )
-
     return SHIELDAI()
 
 
@@ -74,7 +72,6 @@ except Exception as exc:
 # =========================================================
 
 def format_integer_like(value):
-    """Format integer-like numeric values without trailing .0."""
     if value is None:
         return "N/A"
 
@@ -86,54 +83,43 @@ def format_integer_like(value):
 
     try:
         numeric = float(value)
-
         if numeric.is_integer():
             return str(int(numeric))
-
         return f"{numeric:g}"
-
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return str(value)
 
 
 def format_amount(value):
-    """Format a transaction amount."""
     if value is None:
         return "N/A"
 
     try:
         if pd.isna(value):
             return "N/A"
-
         return f"{float(value):,.2f}"
-
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return str(value)
 
 
 def format_time_offset(value):
-    """Format TransactionDT as a relative seconds offset."""
     if value is None:
         return "N/A"
 
     try:
         if pd.isna(value):
             return "N/A"
-
         return f"{float(value):,.0f}"
-
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return str(value)
 
 
 def get_first_present(data, keys, default=None):
-    """Get the first non-None value from a dictionary."""
     if not isinstance(data, dict):
         return default
 
     for key in keys:
         value = data.get(key)
-
         if value is not None:
             return value
 
@@ -141,15 +127,12 @@ def get_first_present(data, keys, default=None):
 
 
 def display_labeled_value(label, value):
-    """Display a labeled value."""
     if value is None:
         value = "N/A"
-
     st.markdown(f"**{label}:** {value}")
 
 
 def find_column(dataframe, candidates):
-    """Find a column using case-insensitive matching."""
     if dataframe.empty:
         return None
 
@@ -160,7 +143,6 @@ def find_column(dataframe, candidates):
 
     for candidate in candidates:
         column = lookup.get(candidate.strip().lower())
-
         if column is not None:
             return column
 
@@ -172,7 +154,6 @@ def find_column(dataframe, candidates):
 # =========================================================
 
 def normalize_relationships(graph_result):
-    """Convert graph relationships into a DataFrame."""
     relationships = get_first_present(
         graph_result,
         [
@@ -199,7 +180,6 @@ def normalize_relationships(graph_result):
 
 
 def display_linked_transactions(graph_result):
-    """Display proxy-linked transaction records."""
     st.markdown("#### Linked transaction details")
 
     relationship_df = normalize_relationships(graph_result)
@@ -254,13 +234,11 @@ def display_linked_transactions(graph_result):
     )
 
     if shared_card_col is not None:
-        shared_card_value = relationship_df[
-            shared_card_col
-        ].iloc[0]
-
         display_labeled_value(
             "Shared card1 proxy value",
-            format_integer_like(shared_card_value),
+            format_integer_like(
+                relationship_df[shared_card_col].iloc[0]
+            ),
         )
 
     if transaction_id_col is None:
@@ -268,7 +246,6 @@ def display_linked_transactions(graph_result):
             "No recognized transaction ID column was found "
             "in the graph relationship records."
         )
-
         st.write(relationship_df.to_dict(orient="records"))
         return
 
@@ -304,7 +281,6 @@ def display_linked_transactions(graph_result):
 
 
 def display_graph_investigation(graph_result):
-    """Display graph investigation information."""
     st.markdown("---")
     st.subheader("Graph Investigation")
 
@@ -346,14 +322,12 @@ def display_graph_investigation(graph_result):
         value = (
             "Yes" if transaction_found else "No"
         ) if transaction_found is not None else "Unknown"
-
         st.metric("Transaction found in graph", value)
 
     with col2:
         value = (
             "Yes" if in_graph_sample else "No"
         ) if in_graph_sample is not None else "Unknown"
-
         st.metric("In graph sample", value)
 
     with col3:
@@ -428,10 +402,11 @@ def display_graph_investigation(graph_result):
 # =========================================================
 
 st.markdown("### Upload Transaction Data")
+
 st.write(
-    "Upload a CSV containing the transaction features expected by the trained model. "
-    "The app reads the file in small chunks and keeps only the selected transaction "
-    "in memory; it does not build a DataFrame containing the entire dataset."
+    "Upload a CSV containing the transaction features expected by the "
+    "trained model. The app reads the file in chunks and retains only "
+    "the selected transaction for inference."
 )
 
 uploaded_file = st.file_uploader(
@@ -444,14 +419,21 @@ if uploaded_file is None:
     st.info("Upload a CSV to begin fraud detection and investigation.")
     st.stop()
 
-# Read only the header and a tiny preview first. Do not load the full CSV here.
+
+# =========================================================
+# READ HEADER AND PREVIEW ONLY
+# =========================================================
+
 try:
     uploaded_file.seek(0)
     header_df = pd.read_csv(uploaded_file, nrows=0)
     uploaded_columns = list(header_df.columns)
+
     uploaded_file.seek(0)
     preview_df = pd.read_csv(uploaded_file, nrows=10)
+
     uploaded_file.seek(0)
+
 except Exception as exc:
     st.error(f"Could not read the uploaded CSV header/preview: {exc}")
     st.stop()
@@ -462,27 +444,54 @@ if not uploaded_columns:
 
 st.success(
     f"CSV received: {uploaded_file.name} — "
-    f"{len(uploaded_columns):,} columns. The full file has not been loaded into memory."
+    f"{len(uploaded_columns):,} columns. "
+    "The full file has not been loaded into memory."
 )
 
-with st.expander("Preview uploaded data", expanded=False):
-    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+with st.expander("Preview uploaded data"):
+    st.dataframe(
+        preview_df,
+        use_container_width=True,
+        hide_index=True,
+    )
 
-# Identify non-model columns using the header only.
+del preview_df
+del header_df
+
+
+# =========================================================
+# VALIDATE FEATURE SCHEMA
+# =========================================================
+
 transaction_id_column = next(
-    (column for column in uploaded_columns
-     if str(column).strip().lower() == "transactionid"),
+    (
+        column
+        for column in uploaded_columns
+        if str(column).strip().lower() == "transactionid"
+    ),
     None,
 )
-label_names = {"isfraud", "target", "fraud_label", "label"}
+
+label_names = {
+    "isfraud",
+    "target",
+    "fraud_label",
+    "label",
+}
+
 label_columns = [
-    column for column in uploaded_columns
+    column
+    for column in uploaded_columns
     if str(column).strip().lower() in label_names
 ]
+
 model_columns = [
-    column for column in uploaded_columns
-    if column != transaction_id_column and column not in label_columns
+    column
+    for column in uploaded_columns
+    if column != transaction_id_column
+    and column not in label_columns
 ]
+
 EXPECTED_FEATURE_COUNT = 392
 
 if label_columns:
@@ -493,22 +502,33 @@ if label_columns:
 
 if len(model_columns) != EXPECTED_FEATURE_COUNT:
     st.error(
-        f"The trained model expects {EXPECTED_FEATURE_COUNT} features, but this CSV "
-        f"has {len(model_columns)} model-input columns after excluding the "
-        "transaction ID and target/label columns."
+        f"The trained model expects {EXPECTED_FEATURE_COUNT} features, "
+        f"but this CSV has {len(model_columns)} model-input columns "
+        "after excluding the transaction ID and target/label columns."
     )
+
     with st.expander("Inspect CSV columns"):
         st.write("CSV columns:", uploaded_columns)
         st.write("Model-input columns:", model_columns)
-    st.info("Please use a CSV with the feature schema expected by the trained model.")
+
+    st.info(
+        "Please use a CSV with the feature schema expected by "
+        "the trained model."
+    )
     st.stop()
 
+
+# =========================================================
+# SELECT TRANSACTION
+# =========================================================
+
 st.markdown("### Select Transaction")
+
 st.caption(
-    "Enter the row number as it appears in the CSV data, starting at 1 (the header "
-    "is not counted). The app searches in chunks, so even a large CSV does not need "
-    "to fit in memory all at once."
+    "Enter the row number in the CSV, starting at 1. "
+    "The header is not counted. The app searches in chunks."
 )
+
 selected_row_number = st.number_input(
     "Transaction row number",
     min_value=1,
@@ -517,25 +537,39 @@ selected_row_number = st.number_input(
     step=1,
     help="Use 1 for the first data row, 2 for the second, and so on.",
 )
+
 selected_index = int(selected_row_number) - 1
 
-if st.button("Load Selected Transaction", use_container_width=True):
+if st.button(
+    "Load Selected Transaction",
+    use_container_width=True,
+):
     selected_row = None
     rows_seen = 0
     chunk_size = 5000
+
     try:
         uploaded_file.seek(0)
-        for chunk in pd.read_csv(uploaded_file, chunksize=chunk_size):
+
+        for chunk in pd.read_csv(
+            uploaded_file,
+            chunksize=chunk_size,
+            low_memory=True,
+        ):
             chunk_end = rows_seen + len(chunk)
+
             if rows_seen <= selected_index < chunk_end:
-                selected_row = chunk.iloc[selected_index - rows_seen]
+                selected_row = chunk.iloc[
+                    selected_index - rows_seen
+                ].copy()
                 break
+
             rows_seen = chunk_end
 
         if selected_row is None:
             st.error(
-                f"Row {selected_row_number:,} was not found. The CSV may contain "
-                f"fewer than {selected_row_number:,} data rows."
+                f"Row {selected_row_number:,} was not found. "
+                "The CSV may contain fewer rows than requested."
             )
             st.stop()
 
@@ -544,49 +578,104 @@ if st.button("Load Selected Transaction", use_container_width=True):
             if transaction_id_column is not None
             else None
         )
-        if selected_transaction_id is not None and pd.isna(selected_transaction_id):
+
+        if (
+            selected_transaction_id is not None
+            and pd.isna(selected_transaction_id)
+        ):
             selected_transaction_id = None
 
-        # Construct the feature dictionary in the CSV's existing column order.
-        # Only this single row is retained for inference.
         selected_features = {
             column: selected_row[column]
             for column in model_columns
         }
-        st.session_state["shield_ai_selected_features"] = selected_features
-        st.session_state["shield_ai_selected_transaction_id"] = selected_transaction_id
-        st.session_state["shield_ai_selected_row_index"] = selected_index
-        st.session_state["shield_ai_selected_upload_name"] = uploaded_file.name
-        # Clear old results so a previous transaction is not mistaken for this one.
+
+        st.session_state[
+            "shield_ai_selected_features"
+        ] = selected_features
+
+        st.session_state[
+            "shield_ai_selected_transaction_id"
+        ] = selected_transaction_id
+
+        st.session_state[
+            "shield_ai_selected_row_index"
+        ] = selected_index
+
+        st.session_state[
+            "shield_ai_selected_upload_name"
+        ] = uploaded_file.name
+
         st.session_state.pop("shield_ai_last_result", None)
-        st.session_state.pop("shield_ai_last_transaction_id", None)
-        st.session_state.pop("shield_ai_last_row_index", None)
-        st.success(f"Loaded CSV data row {selected_row_number:,} for investigation.")
+        st.session_state.pop(
+            "shield_ai_last_transaction_id",
+            None,
+        )
+        st.session_state.pop(
+            "shield_ai_last_row_index",
+            None,
+        )
+
+        st.success(
+            f"Loaded CSV data row {selected_row_number:,} "
+            "for investigation."
+        )
+
     except Exception as exc:
         st.error(f"Could not read the selected transaction: {exc}")
         st.exception(exc)
 
-selected_features = st.session_state.get("shield_ai_selected_features")
-selected_transaction_id = st.session_state.get("shield_ai_selected_transaction_id")
-selected_index = st.session_state.get("shield_ai_selected_row_index")
-selected_upload_name = st.session_state.get("shield_ai_selected_upload_name")
 
-if selected_features is None or selected_upload_name != uploaded_file.name:
-    st.info("Enter a row number and click **Load Selected Transaction** first.")
+# =========================================================
+# DISPLAY SELECTED TRANSACTION
+# =========================================================
+
+selected_features = st.session_state.get(
+    "shield_ai_selected_features"
+)
+
+selected_transaction_id = st.session_state.get(
+    "shield_ai_selected_transaction_id"
+)
+
+selected_index = st.session_state.get(
+    "shield_ai_selected_row_index"
+)
+
+selected_upload_name = st.session_state.get(
+    "shield_ai_selected_upload_name"
+)
+
+if (
+    selected_features is None
+    or selected_upload_name != uploaded_file.name
+    or selected_index is None
+):
+    st.info(
+        "Enter a row number and click **Load Selected Transaction** first."
+    )
     st.stop()
 
 col1, col2 = st.columns(2)
+
 with col1:
-    display_labeled_value("Selected CSV row", format_integer_like(selected_index + 1))
+    display_labeled_value(
+        "Selected CSV row",
+        format_integer_like(selected_index + 1),
+    )
+
 with col2:
-    display_labeled_value("Transaction ID", format_integer_like(selected_transaction_id))
+    display_labeled_value(
+        "Transaction ID",
+        format_integer_like(selected_transaction_id),
+    )
 
 with st.expander("Selected model features"):
     st.json(selected_features)
 
 
 # =========================================================
-# RUN INVESTIGATION
+# RUN INVESTIGATION — PASS A DATAFRAME
 # =========================================================
 
 if st.button(
@@ -598,12 +687,34 @@ if st.button(
         "Running risk assessment and graph investigation..."
     ):
         try:
-            # SHIELDAI.investigate_transaction expects a pandas DataFrame,
-            # not a dictionary. Preserve the trained model's feature order.
+            # IMPORTANT:
+            # src/shield_ai.py requires transaction_features
+            # to be a pandas DataFrame, not a dictionary.
+            #
+            # Preserve the selected feature names and their order.
             transaction_features_df = pd.DataFrame(
                 [selected_features],
                 columns=list(selected_features.keys()),
             )
+
+            if not isinstance(
+                transaction_features_df,
+                pd.DataFrame,
+            ):
+                raise TypeError(
+                    "Selected transaction could not be converted "
+                    "to a pandas DataFrame."
+                )
+
+            if transaction_features_df.shape != (
+                1,
+                EXPECTED_FEATURE_COUNT,
+            ):
+                raise ValueError(
+                    "Unexpected model input shape: "
+                    f"{transaction_features_df.shape}. Expected "
+                    f"(1, {EXPECTED_FEATURE_COUNT})."
+                )
 
             result = shield_ai.investigate_transaction(
                 transaction_features_df,
@@ -616,7 +727,9 @@ if st.button(
                     "a dictionary."
                 )
 
-            st.session_state["shield_ai_last_result"] = result
+            st.session_state[
+                "shield_ai_last_result"
+            ] = result
 
             st.session_state[
                 "shield_ai_last_transaction_id"
@@ -641,7 +754,7 @@ result = st.session_state.get("shield_ai_last_result")
 
 if result is None:
     st.info(
-        "Select a transaction and click Investigate Transaction "
+        "Load a transaction and click **Investigate Transaction** "
         "to view the investigation results."
     )
     st.stop()
@@ -704,11 +817,13 @@ risk_col, decision_col = st.columns(2)
 with risk_col:
     try:
         score = float(risk_score)
+
         if math.isfinite(score) and 0 <= score <= 1:
             st.metric("Fraud Probability", f"{score:.2%}")
         else:
             st.metric("Fraud Probability", "N/A")
-    except (TypeError, ValueError):
+
+    except (TypeError, ValueError, OverflowError):
         st.metric("Fraud Probability", "N/A")
 
 with decision_col:
@@ -806,6 +921,7 @@ elif isinstance(explanations, (list, tuple)):
             st.markdown(
                 f"- **{feature}:** {contribution}"
             )
+
         else:
             st.write(f"- {item}")
 
@@ -872,9 +988,7 @@ report = get_first_present(
 )
 
 if report is None:
-    st.info(
-        "No separate investigator report was returned."
-    )
+    st.info("No separate investigator report was returned.")
 
 elif isinstance(report, dict):
     st.json(report)
