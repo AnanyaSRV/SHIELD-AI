@@ -1,4 +1,4 @@
-```python
+
 from pathlib import Path
 
 import joblib
@@ -410,4 +410,3 @@ class RiskAssessmentAgent:
         )
 
         return result
-```
