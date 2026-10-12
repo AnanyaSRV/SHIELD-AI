@@ -1,7 +1,5 @@
-
 import importlib
 import logging
-import sys
 
 import streamlit as st
 
@@ -38,13 +36,7 @@ try:
     logger.info("Loading page: %s (%s)", page, module_name)
 
     importlib.invalidate_caches()
-
-    # Reload modules on subsequent Streamlit reruns so that
-    # pages which render at module level continue to work.
-    if module_name in sys.modules:
-        module = importlib.reload(sys.modules[module_name])
-    else:
-        module = importlib.import_module(module_name)
+    module = importlib.import_module(module_name)
 
     # The dashboard uses an explicit rendering function.
     if page == "Dashboard":
@@ -57,15 +49,13 @@ try:
 
         render_function()
 
-    # These existing modules render their content when imported.
+    # The other page modules render their content at import time.
     # Do not call their rendering functions a second time.
-    elif page == "Fraud Detection":
-        pass
-
-    elif page == "Fraud Attribution":
-        pass
-
-    elif page == "Case Report":
+    elif page in (
+        "Fraud Detection",
+        "Fraud Attribution",
+        "Case Report",
+    ):
         pass
 
     logger.info("Successfully loaded page: %s", page)

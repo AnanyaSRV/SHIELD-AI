@@ -25,8 +25,10 @@ for directory in (PROJECT_ROOT, SRC_DIR):
 
 try:
     from shield_ai import SHIELDAI
+    from graph_agent import GraphInvestigationAgent
 except ImportError as exc:
     SHIELDAI = None
+    GraphInvestigationAgent = None
     SHIELD_IMPORT_ERROR = str(exc)
 else:
     SHIELD_IMPORT_ERROR = None
@@ -442,6 +444,56 @@ if not uploaded_columns:
     st.error("The uploaded CSV has no columns.")
     st.stop()
 
+
+# =========================================================
+# MAKE THE UPLOADED CSV AVAILABLE TO GRAPH INVESTIGATION
+# =========================================================
+
+# The graph agent reads a file path independently of the selected row.
+# Stage the uploaded CSV to disk once per upload, then point the graph
+# agent at that file when the user runs an investigation. This is
+# runtime-only storage; do not commit the uploaded CSV to Git.
+normalized_upload_columns = {
+    str(column).strip().lower(): column for column in uploaded_columns
+}
+graph_columns_present = (
+    "transactionid" in normalized_upload_columns
+    and "card1" in normalized_upload_columns
+)
+
+if graph_columns_present:
+    graph_upload_signature = (uploaded_file.name, uploaded_file.size)
+    if st.session_state.get("shield_ai_graph_upload_signature") != graph_upload_signature:
+        graph_upload_dir = PROJECT_ROOT / "data"
+        graph_upload_dir.mkdir(parents=True, exist_ok=True)
+        graph_upload_path = graph_upload_dir / "shield_ai_uploaded_graph.csv"
+
+        try:
+            uploaded_file.seek(0)
+            with graph_upload_path.open("wb") as graph_file:
+                while True:
+                    block = uploaded_file.read(1024 * 1024)
+                    if not block:
+                        break
+                    graph_file.write(block)
+            uploaded_file.seek(0)
+
+            st.session_state["shield_ai_graph_dataset_path"] = str(graph_upload_path)
+            st.session_state["shield_ai_graph_upload_signature"] = graph_upload_signature
+            shield_ai.graph_agent = None
+            shield_ai.graph_initialization_error = None
+        except Exception as exc:
+            uploaded_file.seek(0)
+            st.warning(
+                "Could not stage the uploaded CSV for graph investigation: "
+                f"{exc}. Risk prediction and SHAP can still run."
+            )
+else:
+    st.info(
+        "Graph investigation requires TransactionID and card1 columns. "
+        "Risk prediction can still run without them."
+    )
+
 st.success(
     f"CSV received: {uploaded_file.name} — "
     f"{len(uploaded_columns):,} columns. "
@@ -715,6 +767,27 @@ if st.button(
                     f"{transaction_features_df.shape}. Expected "
                     f"(1, {EXPECTED_FEATURE_COUNT})."
                 )
+
+            # Use the uploaded CSV as the graph source when it contains
+            # TransactionID and card1. Reuse the built graph for this upload.
+            graph_dataset_path = st.session_state.get(
+                "shield_ai_graph_dataset_path"
+            )
+            if graph_dataset_path and GraphInvestigationAgent is not None:
+                graph_path = Path(graph_dataset_path)
+                current_agent = getattr(shield_ai, "graph_agent", None)
+                current_path = getattr(current_agent, "dataset_path", None)
+                if (
+                    current_agent is None
+                    or current_path is None
+                    or Path(current_path) != graph_path
+                ):
+                    shield_ai.graph_agent = GraphInvestigationAgent(
+                        dataset_path=graph_path
+                    )
+                    shield_ai.graph_initialization_error = (
+                        shield_ai.graph_agent.initialization_error
+                    )
 
             result = shield_ai.investigate_transaction(
                 transaction_features_df,

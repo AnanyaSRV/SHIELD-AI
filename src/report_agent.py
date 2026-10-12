@@ -6,7 +6,11 @@ class ReportAgent:
     """Generate a transparent, readable investigator-style report."""
 
     def generate_report(
-        self, risk_result, graph_result=None, evidence=None, action="VERIFY"
+        self,
+        risk_result,
+        graph_result=None,
+        evidence=None,
+        action="VERIFY",
     ):
         """Build a Markdown report from model, graph, and evidence results."""
 
@@ -21,29 +25,54 @@ class ReportAgent:
             "threshold_status", "not specified"
         )
 
-        graph_status = graph_result.get(
-            "graph_investigation_status",
-            "Graph investigation status not provided.",
+        transaction_found = graph_result.get("transaction_found")
+        in_graph_sample = graph_result.get("in_graph_sample")
+
+        raw_status = str(
+            graph_result.get(
+                "graph_investigation_status",
+                graph_result.get("status", ""),
+            )
+            or ""
         )
 
-        # The current graph uses exploratory shared-card proxy links.
-        # Do not describe them as suspicious or confirmed fraud.
+        if transaction_found is True and in_graph_sample is True:
+            graph_status = (
+                "Completed — transaction found in the graph; "
+                "shared-card proxy relationships were checked."
+            )
+        elif transaction_found is True and in_graph_sample is False:
+            graph_status = (
+                "Partial — transaction exists in the dataset but is "
+                "outside the constructed graph; neighbors could not "
+                "be computed."
+            )
+        elif transaction_found is False:
+            graph_status = (
+                "Unavailable — transaction was not found in the graph, "
+                "or graph lookup could not be completed."
+            )
+            if raw_status:
+                graph_status += f" Details: {raw_status}"
+        else:
+            graph_status = (
+                raw_status
+                if raw_status
+                else "Unavailable — graph lookup status was not provided."
+            )
+
         proxy_neighbors = graph_result.get(
             "proxy_neighbor_count",
             graph_result.get("shared_card_proxy_neighbors", 0),
         )
 
         try:
-            proxy_neighbors = int(proxy_neighbors or 0)
-        except (TypeError, ValueError):
+            proxy_neighbors = max(0, int(proxy_neighbors or 0))
+        except (TypeError, ValueError, OverflowError):
             proxy_neighbors = 0
 
-        # Graph findings are only described as validated if the graph
-        # agent explicitly marks them as validated.
-        graph_validated = (
-            graph_result.get("finding_validated") is True
-            and graph_status == "validated"
-        )
+        # Shared-card links are not validated fraud findings.
+        graph_validated = graph_result.get("finding_validated") is True
 
         hub_detected = (
             graph_result.get("hub_detected") is True
@@ -75,7 +104,7 @@ class ReportAgent:
                     lines.append(
                         f"- **Fraud probability:** {probability}"
                     )
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 lines.append(f"- **Fraud probability:** {probability}")
 
         if threshold is not None:
@@ -90,7 +119,7 @@ class ReportAgent:
                     lines.append(
                         f"- **Classification threshold:** {threshold}"
                     )
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 lines.append(
                     f"- **Classification threshold:** {threshold}"
                 )
@@ -102,16 +131,44 @@ class ReportAgent:
             "## 2. Graph Investigation",
             "",
             f"- **Investigation status:** {graph_status}",
-            f"- **Validated hub detected:** {hub_detected}",
-            f"- **Validated fraud ring detected:** {fraud_ring_detected}",
+            (
+                "- **Transaction found:** "
+                + (
+                    "Yes" if transaction_found is True
+                    else "No" if transaction_found is False
+                    else "Unknown"
+                )
+            ),
+            (
+                "- **Included in constructed graph:** "
+                + (
+                    "Yes" if in_graph_sample is True
+                    else "No" if in_graph_sample is False
+                    else "Unknown"
+                )
+            ),
             f"- **Shared-card proxy neighbors:** {proxy_neighbors}",
+            (
+                "- **Validated hub detected:** "
+                + (
+                    "Yes" if hub_detected
+                    else "No validated finding"
+                )
+            ),
+            (
+                "- **Validated fraud ring detected:** "
+                + (
+                    "Yes" if fraud_ring_detected
+                    else "No validated finding"
+                )
+            ),
             "",
             (
                 "> **Graph limitation:** Shared-card links are exploratory "
                 "proxy relationships. They do not independently establish "
-                "account ownership, coordinated fraud, or a confirmed "
-                "fraud ring. An absent graph finding does not prove that "
-                "a transaction is legitimate."
+                "account ownership, coordinated fraud, or a confirmed fraud "
+                "ring. No validated finding does not prove that a transaction "
+                "is legitimate."
             ),
             "",
             "## 3. Evidence",
@@ -135,13 +192,13 @@ class ReportAgent:
             "## 5. Interpretation and Limitations",
             "",
             (
-                "This report presents a model-assisted assessment, not "
-                "a confirmed fraud finding. The predicted probability "
-                "and classification depend on the trained model and "
-                "selected classification threshold. Graph relationships "
-                "are exploratory unless independently validated. The "
-                "recommended action follows the application's configured "
-                "decision policy and is not a guarantee of transaction safety."
+                "This report presents a model-assisted assessment, not a "
+                "confirmed fraud finding. The predicted probability and "
+                "classification depend on the trained model and selected "
+                "classification threshold. Graph relationships are "
+                "exploratory unless independently validated. The recommended "
+                "action follows the application's configured decision policy "
+                "and is not a guarantee of transaction safety."
             ),
             "",
         ])
