@@ -8,3 +8,4 @@ networkx==3.4.2
 matplotlib==3.9.3
 scipy==1.13.1
 joblib==1.5.3
+shap
